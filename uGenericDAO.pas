@@ -7,7 +7,7 @@ uses
   FireDAC.Stan.Intf, FireDAC.Stan.Option, FireDAC.Stan.Error, FireDAC.UI.Intf, FireDAC.Phys.Intf,
   FireDAC.Stan.Def, FireDAC.Stan.Pool, FireDAC.Stan.Async, FireDAC.Phys,
   FireDAC.Phys.FB, FireDAC.Phys.FBDef, FireDAC.VCLUI.Wait, Data.DB,
-  FireDAC.Comp.Client, Vcl.StdCtrls, FireDAC.Phys.IBBase, FireDAC.Dapt, uBancoDados;
+  FireDAC.Comp.Client, Vcl.StdCtrls, FireDAC.Phys.IBBase, FireDAC.Dapt, uBancoDados, Vcl.Grids;
 
 type
   TGenericDAO = class(TObject)
@@ -16,15 +16,18 @@ type
 
     function GetNomeTabela: string;
     function Clausula(var adicionou_where: Boolean): string;
-    function strIgualdade(str_valor: string): string;
+    function strIgualdade(str_valor: string; tipo_variavel: string): string;
+
+    function GerarSelect: string;
+    function AlimentarObjeto(qry: TFDQuery; var grid: TStringGrid): TObjectList<TObject>;
+  protected
+    property Classe: TObject read FClass write FClass;
   public
     constructor Create; virtual; abstract;
 
-    function Select: TObjectList<TObject>;
+    function Select(var grid: TStringGrid): TObjectList<TObject>;
     function Insert: string;
     function Update: string;
-
-    property Classe: TObject read FClass write FClass;
   end;
 
 implementation
@@ -36,146 +39,7 @@ const
   cIgualdade = ' = ';
   cIsNull    = ' is null ';
 
-function TGenericDAO.GetNomeTabela: string;
-var
-  Contexto: TRttiContext;
-  TypObj: TRttiType;
-  Atributo: TCustomAttribute;
-
-begin
-  Contexto := TRttiContext.Create;
-  TypObj := Contexto.GetType(FClass.ClassInfo);
-  for Atributo in TypObj.GetAttributes do
-  begin
-    if Atributo is NomeTabela then
-      Exit(NomeTabela(Atributo).Nome_Tabela);
-  end;
-end;
-
-function TGenericDAO.Insert: string;
-var
-  Contexto: TRttiContext;
-  TypObj: TRttiType;
-  Prop: TRttiProperty;
-  comando_insert, campos, valores: String;
-  tipo_valor: string;
-  Atributo: TCustomAttribute;
-
-  valor: string;
-  value_str: TString;
-  value_int: TInteger;
-  value_double: TDouble;
-  value_date: TDate;
-
-begin
-  comando_insert := EmptyStr;
-  campos := EmptyStr;
-  valores := EmptyStr;
-
-  comando_insert := 'insert into ' + GetNomeTabela;
-
-  Contexto := TRttiContext.Create;
-  TypObj := Contexto.GetType(FClass.ClassInfo);
-
-  for Prop in TypObj.GetProperties do begin
-    try
-      case Prop.GetValue(FClass).Kind of
-        tkClass: Break;
-
-        tkRecord: begin
-          if Prop.GetValue(Fclass).IsType(TypeInfo(TString)) then begin
-            tipo_valor := 'TString';
-
-            value_str := Prop.GetValue(FClass).AsType<TString>;
-
-            if value_str.HasValue then
-              valor := QuotedStr(value_str) + ', '
-            else
-              valor := 'null, ';
-          end
-          else if Prop.GetValue(Fclass).IsType(TypeInfo(TInteger)) then begin
-            tipo_valor := 'TInteger';
-
-            value_int := Prop.GetValue(FClass).AsType<TInteger>;
-
-            if value_int.HasValue then
-              valor := IntToStr(value_int) + ', '
-            else
-              valor := 'null, ';
-          end
-          else if Prop.GetValue(Fclass).IsType(TypeInfo(TDouble)) then begin
-            tipo_valor := 'TDouble';
-
-            value_double := Prop.GetValue(FClass).AsType<TDouble>;
-
-            if value_double.HasValue then
-              valor := FloatToStr(value_double) + ', '
-            else
-              valor := 'null, ';
-          end
-          else if Prop.GetValue(Fclass).IsType(TypeInfo(TDate)) then begin
-            tipo_valor := 'TDate';
-
-            value_date := Prop.GetValue(FClass).AsType<TDate>;
-
-            if value_date.HasValue then
-              valor := DateTimeToStr(value_date) + ', '
-            else
-              valor := 'null, ';
-          end
-        end;
-      end;
-    except
-      on e: Exception do
-        raise Exception.Create('O valor informado (' + valor + ') na propriedade "' + Prop.Name + '" no objeto ' + FClass.ClassName + ' não é compátivel com o tipo definido na classe (' + tipo_valor + ')!');
-    end;
-
-    for Atributo in Prop.GetAttributes do begin
-      if Atributo is DadosColuna then begin
-        if DadosColuna(Atributo).Somente_Leitura then
-          Break;
-
-        campos := campos + DadosColuna(Atributo).Nome_Coluna + ', ';
-        valores := valores + valor;
-        Break;
-      end;
-
-      if Atributo is ChaveEstrangeira then
-        Continue;
-    end;
-  end;
-
-  campos := Copy(campos, 1, Length(campos) - 2);
-  valores := Copy(valores, 1, Length(valores) - 2);
-  comando_insert := comando_insert + ' ( ' + sLineBreak + campos + sLineBreak + ' )  values ( ' + sLineBreak + valores + sLineBreak + ' )';
-
-  try
-    //Executar SQL
-    Result := comando_insert;
-  except
-    on e: Exception do
-    begin
-      raise E.Create('Erro: ' + e.Message);
-    end;
-  end;
-end;
-
-function TGenericDAO.Clausula(var adicionou_where: Boolean): string;
-begin
-  if adicionou_where then
-    Result := ' and '
-  else begin
-    adicionou_where := True;
-    Result := ' where ';
-  end;
-end;
-
-function TGenericDAO.strIgualdade(str_valor: string): string;
-begin
-  Result := IfThen(str_valor <> ' is null ', ' = ');
-end;
-
-function TGenericDAO.Select: TObjectList<TObject>;
+function TGenericDAO.GerarSelect: string;
 var
   contexto: TRttiContext;
   type_obj: TRttiType;
@@ -206,11 +70,6 @@ var
   value_date: TDate;
 
   filtrar_campo: Boolean;
-  continuar_loop: Boolean;
-
-  qry: TFDQuery;
-
-  teste: TObject;
 
 begin
   script_ligacoes := TStringList.Create;
@@ -352,7 +211,7 @@ begin
 
     //Essa variável é marcada com True se existir algum valor na propriedade percorrida.
     if filtrar_campo then
-      str_condicaoWhere := str_condicaoWhere + Clausula(adicionou_where) + IfThen(apelido_tab_estrangeira = EmptyStr, apelido_tab_principal, apelido_tab_estrangeira) + '.' + coluna + strIgualdade(str_valor) + str_valor + sLineBreak;
+      str_condicaoWhere := str_condicaoWhere + Clausula(adicionou_where) + IfThen(apelido_tab_estrangeira = EmptyStr, apelido_tab_principal, apelido_tab_estrangeira) + '.' + coluna + strIgualdade(str_valor, tipo_valor) + str_valor + sLineBreak;
   end;
 
   str_campos := Trim(str_campos);
@@ -370,64 +229,254 @@ begin
     script_select.Add(script_ligacoes.GetText);
 
   script_select.Add(str_condicaoWhere);
+  Result := script_select.GetText;
+
+  script_select.Free;
+end;
+
+function TGenericDAO.GetNomeTabela: string;
+var
+  Contexto: TRttiContext;
+  TypObj: TRttiType;
+  Atributo: TCustomAttribute;
+
+begin
+  Contexto := TRttiContext.Create;
+  TypObj := Contexto.GetType(FClass.ClassInfo);
+  for Atributo in TypObj.GetAttributes do
+  begin
+    if Atributo is NomeTabela then
+      Exit(NomeTabela(Atributo).Nome_Tabela);
+  end;
+end;
+
+function TGenericDAO.Insert: string;
+var
+  Contexto: TRttiContext;
+  TypObj: TRttiType;
+  Prop: TRttiProperty;
+  comando_insert, campos, valores: String;
+  tipo_valor: string;
+  Atributo: TCustomAttribute;
+
+  valor: string;
+  value_str: TString;
+  value_int: TInteger;
+  value_double: TDouble;
+  value_date: TDate;
+
+begin
+  comando_insert := EmptyStr;
+  campos := EmptyStr;
+  valores := EmptyStr;
+
+  comando_insert := 'insert into ' + GetNomeTabela;
+
+  Contexto := TRttiContext.Create;
+  TypObj := Contexto.GetType(FClass.ClassInfo);
+
+  for Prop in TypObj.GetProperties do begin
+    try
+      case Prop.GetValue(FClass).Kind of
+        tkClass: Break;
+
+        tkRecord: begin
+          if Prop.GetValue(Fclass).IsType(TypeInfo(TString)) then begin
+            tipo_valor := 'TString';
+
+            value_str := Prop.GetValue(FClass).AsType<TString>;
+
+            if value_str.HasValue then
+              valor := QuotedStr(value_str) + ', '
+            else
+              valor := 'null, ';
+          end
+          else if Prop.GetValue(Fclass).IsType(TypeInfo(TInteger)) then begin
+            tipo_valor := 'TInteger';
+
+            value_int := Prop.GetValue(FClass).AsType<TInteger>;
+
+            if value_int.HasValue then
+              valor := IntToStr(value_int) + ', '
+            else
+              valor := 'null, ';
+          end
+          else if Prop.GetValue(Fclass).IsType(TypeInfo(TDouble)) then begin
+            tipo_valor := 'TDouble';
+
+            value_double := Prop.GetValue(FClass).AsType<TDouble>;
+
+            if value_double.HasValue then
+              valor := FloatToStr(value_double) + ', '
+            else
+              valor := 'null, ';
+          end
+          else if Prop.GetValue(Fclass).IsType(TypeInfo(TDate)) then begin
+            tipo_valor := 'TDate';
+
+            value_date := Prop.GetValue(FClass).AsType<TDate>;
+
+            if value_date.HasValue then
+              valor := DateTimeToStr(value_date) + ', '
+            else
+              valor := 'null, ';
+          end
+        end;
+      end;
+    except
+      on e: Exception do
+        raise Exception.Create('O valor informado (' + valor + ') na propriedade "' + Prop.Name + '" no objeto ' + FClass.ClassName + ' não é compátivel com o tipo definido na classe (' + tipo_valor + ')!');
+    end;
+
+    for Atributo in Prop.GetAttributes do begin
+      if Atributo is DadosColuna then begin
+        if DadosColuna(Atributo).Somente_Leitura then
+          Break;
+
+        campos := campos + DadosColuna(Atributo).Nome_Coluna + ', ';
+        valores := valores + valor;
+        Break;
+      end;
+
+      if Atributo is ChaveEstrangeira then
+        Continue;
+    end;
+  end;
+
+  campos := Copy(campos, 1, Length(campos) - 2);
+  valores := Copy(valores, 1, Length(valores) - 2);
+  comando_insert := comando_insert + ' ( ' + sLineBreak + campos + sLineBreak + ' )  values ( ' + sLineBreak + valores + sLineBreak + ' )';
 
   try
     //Executar SQL
-    Result := script_select.GetText;
-
-    //Executando o SQL
-    qry := TFDQuery.Create(nil);
-    qry.Connection := TBD.Conexao;
-    qry.Open(script_select.GetText);
-
-    if not qry.IsEmpty then begin
-      Result := TObjectList<TObject>.Create;
-
-      qry.First;
-      while not qry.EoF do begin
-        FClass := FClass.NewInstance;
-
-        for i := 0 to qry.FieldCount - 1 do begin //Loop de coluna por coluna para localizar o campo no objeto
-          for prop in type_obj.GetProperties do begin
-            continuar_loop := True;
-
-            for atributo in prop.GetAttributes do begin
-              if atributo is DadosColuna then begin
-                if DadosColuna(atributo).Nome_Coluna = qry.Fields[i].FieldName then
-                begin
-                  if prop.GetValue(Fclass).IsType(TypeInfo(TString)) then
-                    prop.SetValue(FClass, TValue.From(TString(qry.Fields[i].AsString)))
-                  else if prop.GetValue(Fclass).IsType(TypeInfo(TInteger)) then
-                    prop.SetValue(FClass, TValue.From(TInteger(qry.Fields[i].AsInteger)))
-                  else if prop.GetValue(Fclass).IsType(TypeInfo(TDouble)) then
-                    prop.SetValue(FClass, TValue.From(TDouble(qry.Fields[i].AsFloat)))
-                  else if prop.GetValue(Fclass).IsType(TypeInfo(TDate)) then
-                    prop.SetValue(FClass, TValue.From(qry.Fields[i].AsDateTime));
-
-                  continuar_loop := False;
-                  Break;
-                end;
-              end;
-            end;
-
-            if not continuar_loop then
-              Break;
-          end;
-        end;
-
-
-        Result.Add(FClass);
-        qry.Next;
-      end;
-    end;
+    Result := comando_insert;
   except
     on e: Exception do
     begin
       raise E.Create('Erro: ' + e.Message);
     end;
   end;
+end;
 
-  script_select.Free;
+function TGenericDAO.AlimentarObjeto(qry: TFDQuery; var grid: TStringGrid): TObjectList<TObject>;
+var
+  contexto: TRttiContext;
+  type_obj: TRttiType;
+  type_class: TRttiType;
+  prop: TRttiProperty;
+  prop_class: TRttiProperty;
+  atributo: TCustomAttribute;
+
+  i: Integer;
+  j: Integer;
+  linha: Integer;
+
+  continuar_loop: Boolean;
+
+begin
+  if qry.IsEmpty then
+    Exit(nil);
+
+  linha := 0;
+  if Assigned(grid)then
+    linha := grid.FixedRows;
+
+  contexto := TRttiContext.Create;
+  type_obj := contexto.GetType(FClass.ClassInfo);
+
+  Result := TObjectList<TObject>.Create;
+
+  qry.First;
+  while not qry.EoF do begin
+    FClass := FClass.NewInstance;
+
+    for i := 0 to qry.FieldCount - 1 do begin //Loop de coluna por coluna para localizar o campo no objeto
+      for prop in type_obj.GetProperties do begin
+        continuar_loop := True;
+
+        for atributo in prop.GetAttributes do begin
+          if atributo is DadosColuna then begin
+            if DadosColuna(atributo).Nome_Coluna = qry.Fields[i].FieldName then
+            begin
+              if prop.GetValue(Fclass).IsType(TypeInfo(TString)) then
+                prop.SetValue(FClass, TValue.From(TString(qry.Fields[i].AsString)))
+              else if prop.GetValue(Fclass).IsType(TypeInfo(TInteger)) then
+                prop.SetValue(FClass, TValue.From(TInteger(qry.Fields[i].AsInteger)))
+              else if prop.GetValue(Fclass).IsType(TypeInfo(TDouble)) then
+                prop.SetValue(FClass, TValue.From(TDouble(qry.Fields[i].AsFloat)))
+              else if prop.GetValue(Fclass).IsType(TypeInfo(TDate)) then
+                prop.SetValue(FClass, TValue.From(qry.Fields[i].AsDateTime));
+
+              if Assigned(grid) then
+              begin
+                j := 0;
+                while grid.Objects[j, 0] <> nil do
+                begin
+                  type_class := TRttiContext.Create.GetType(grid.Objects[j, 0].ClassInfo);
+
+                  prop_class := type_class.GetProperty('Nome');
+                  if not Assigned(prop_class) then
+                    Break;
+
+                  if prop_class.GetValue(grid.Objects[j, 0]).AsString = qry.Fields[i].FieldName then
+                    grid.Cells[j, linha] := qry.Fields[i].AsString;
+
+                  Inc(j);
+                end;
+              end;
+
+              continuar_loop := False;
+              Break;
+            end;
+          end;
+        end;
+
+        if not continuar_loop then
+          Break;
+      end;
+    end;
+
+    Result.Add(FClass);
+    Inc(linha);
+    qry.Next;
+  end;
+
+  if Assigned(grid) then
+    grid.RowCount := Result.Count + grid.FixedRows;
+end;
+
+function TGenericDAO.Clausula(var adicionou_where: Boolean): string;
+begin
+  if adicionou_where then
+    Result := ' and '
+  else begin
+    adicionou_where := True;
+    Result := ' where ';
+  end;
+end;
+
+function TGenericDAO.strIgualdade(str_valor: string; tipo_variavel: string): string;
+begin
+  Result := IfThen(str_valor <> ' is null ', IfThen(tipo_variavel = 'TString', ' like ', ' = '));
+end;
+
+function TGenericDAO.Select(var grid: TStringGrid): TObjectList<TObject>;
+var
+  qry: TFDQuery;
+begin
+  try
+    //Executando o SQL
+    qry := TFDQuery.Create(nil);
+    qry.Connection := TBD.Conexao;
+    qry.Open(GerarSelect);
+
+    Result := AlimentarObjeto(qry, grid);
+  except
+    on e: Exception do
+    begin
+      raise E.Create('Erro: ' + e.Message);
+    end;
+  end;
 end;
 
 function TGenericDAO.Update: string;
