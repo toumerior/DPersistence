@@ -1,5 +1,5 @@
 # DPersistence
-Framework de persistência de dados no Delphi
+ORM desenvolvido em Delphi.
 
 Esse framework tem por finalidade realizar grande parte de persistência dos sistemas sem que se precise utilizar códigos SQL diretamente.
 O framework está em fase de amadurecimento e pode ser adaptado conforme necessidades. 
